@@ -84,9 +84,6 @@ __error__(char *pcFilename, uint32_t ui32Line)
 static uint16_t ADC_BufA[WINDOW_SIZE/2];
 static uint16_t ADC_BufB[WINDOW_SIZE/2];
 
-//static uint8_t ADC_BufA_Ready=0;
-//static uint8_t ADC_BufB_Ready=0;
-
 //Lagging half of the signal segment to be windowed
 static uint16_t half_window[WINDOW_SIZE/2];
 
@@ -139,82 +136,50 @@ void uDMAIntHandler(void)
 
     }
 
-/*switch(SystemState){
-
-    case SYSTEM_WINDOW_LOADING:
-        SystemState = SYSTEM_WINDOW_READYFORREAD;
-        break;
-
-    case SYSTEM_WINDOW_SHIFTING:
-        SystemState = SYSTEM_WINDOW_READYFORLOAD;
-        break;
-
-    }*/
 }
 
 
 //Called when a uDMA transfer is complete.
-//Purpose is to do something with data and switch between the ping-ping buffers.
+//Purpose is to update module state and switch between the ping-ping buffers.
 void ADCSeq3IntHandler(void)
 {
-    //Warning: Calling UARTprintf in this handler seems to cause some sampling artefacts at the end of buffer B
-
-    //TODO: Remove duplicate code
+    //Warning: Calling UARTprintf in this handler seems to cause some sampling artifacts at the end of buffer B
 
     uint32_t ui32Mode;
     ui32Mode = ROM_uDMAChannelModeGet(UDMA_CHANNEL_ADC3 | UDMA_PRI_SELECT);
     if(ui32Mode == UDMA_MODE_STOP)
     {
-        //data in buffer A is ready
-        //ADC_BufA_Ready=1;
-        //ADC_BufB_Ready=0;
+        //Data in buffer A is ready
 
         //Set up the next transfer for buffer A so that it is ready when B is full
         ROM_uDMAChannelTransferSet(UDMA_CHANNEL_ADC3 | UDMA_PRI_SELECT, UDMA_MODE_PINGPONG, (void *)(ADC0_BASE + ADC_O_SSFIFO3), ADC_BufA, WINDOW_SIZE/2);
 
 
-        if(SystemState!=HALFWINDOW_DONELOADING_FROMB)
+        if(SystemState != HALFWINDOW_DONELOADING_FROMB)
         {
             //Data wasn't processed quickly enough, so "drop" this half-window's worth of data.
-            //Can indicate a flag or print a warning message here if need be.
+            //Can increment a counter or set a flag to indicate this condition if need be.
         }
-        SystemState=HALFWINDOW_READYFORREAD_WITHA;
+
+        SystemState = HALFWINDOW_READYFORREAD_WITHA;
 
     }
 
     ui32Mode = ROM_uDMAChannelModeGet(UDMA_CHANNEL_ADC3 | UDMA_ALT_SELECT);
     if(ui32Mode == UDMA_MODE_STOP)
     {
-        //data in buffer B is ready
-        //ADC_BufB_Ready=1;
-        //ADC_BufA_Ready=0;
+        //Data in buffer B is ready
 
         //Set up the next transfer for buffer B so that it is ready when A is full
         ROM_uDMAChannelTransferSet(UDMA_CHANNEL_ADC3 | UDMA_ALT_SELECT, UDMA_MODE_PINGPONG, (void *)(ADC0_BASE + ADC_O_SSFIFO3), ADC_BufB, WINDOW_SIZE/2);
 
-        if(SystemState!=HALFWINDOW_DONELOADING_FROMA)
+        if(SystemState != HALFWINDOW_DONELOADING_FROMA)
         {
             //Data wasn't processed quickly enough, so "drop" this half-window's worth of data.
-            //Can indicate a flag or print a warning message here if need be.
+            //Can increment a counter or set a flag to indicate this condition if need be.
         }
-        SystemState=HALFWINDOW_READYFORREAD_WITHB;
 
-/*        if(SystemState==SYSTEM_WINDOW_READYFORLOAD)
-        {
-
-        //Set up transfer of buffer B data to second half of signal_segment[WINDOW_SIZE]
-        //(Two samples are being transferred as a single unit.)
-        ROM_uDMAChannelTransferSet(UDMA_CHANNEL_SW | UDMA_PRI_SELECT, UDMA_MODE_AUTO, ADC_BufB, signal_segment + WINDOW_SIZE/2, WINDOW_SIZE/4);
-        //Initiate transfer
-        ROM_uDMAChannelEnable(UDMA_CHANNEL_SW);
-        ROM_uDMAChannelRequest(UDMA_CHANNEL_SW);
-
-        SystemState=SYSTEM_WINDOW_LOADING;
-        }else{
-            //Data wasn't processed quickly enough, so "drop" this half-window's worth of data.
-            //Can indicate a flag or print a warning message here if need be.
-
-        }*/
+        SystemState = HALFWINDOW_READYFORREAD_WITHB;
 
     }
 
@@ -276,18 +241,20 @@ int main(void)
     //Note that with PLL enabled (SYSCTL_USE_PLL), PLL is 400 MHz and is pre-divided down to
     //200 MHz. After that, SYSCTL_SYSDIV_* divides the clock further.
     //In this case _2_5 indicates clock division of 2.5, resulting in 80 MHz.
-    ROM_SysCtlClockSet(SYSCTL_SYSDIV_2_5|SYSCTL_USE_PLL|SYSCTL_XTAL_16MHZ|SYSCTL_OSC_MAIN);
+    ROM_SysCtlClockSet(SYSCTL_SYSDIV_2_5 | SYSCTL_USE_PLL | SYSCTL_XTAL_16MHZ | SYSCTL_OSC_MAIN);
 
     //Enable FPU for use in the main program thread but not in any of the interrupts
     ROM_FPUEnable();
 
-
     ConfigureUART(); //Configures UART0 for command-line use (for debug purposes only)
+
 
     UARTprintf("Bispectrum visualizer\n");
 
+
     //Set global system state
     SystemState=HALFWINDOW_READYFORREAD_WITHB;
+
 
     //Set up uDMA
     ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_UDMA);
@@ -296,14 +263,17 @@ int main(void)
     ROM_uDMAEnable(); //Enable uDMA controller
     ROM_uDMAControlBaseSet(ui8ControlTable); //Pass pointer to base of uDMA channel control structure
 
+
     //***Set up ADC0 to use AIN1 (analog in 1) on PE2 (port E, pin 2)
     ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_ADC0);
     ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOE); //PE
     while(!ROM_SysCtlPeripheralReady(SYSCTL_PERIPH_ADC0)){}
     while(!ROM_SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOE)){}
     ROM_GPIOPinTypeADC(GPIO_PORTE_BASE, GPIO_PIN_2); //PE2
+
     //Attempt to prevent neighbouring pins from coupling signal to the ADC input pin
     ROM_GPIOPinTypeGPIOInput(GPIO_PORTE_BASE, GPIO_PIN_1 | GPIO_PIN_3);
+
 
     //Set up sequencer 3 to be triggered by on-chip timer (this will control sample rate)
     ADCSequenceConfigure(ADC0_BASE, 3, ADC_TRIGGER_TIMER, 0);
@@ -311,20 +281,25 @@ int main(void)
     ROM_ADCSequenceEnable(ADC0_BASE, 3);
     ADCSequenceDMAEnable(ADC0_BASE, 3);
 
+
     //Initialize uDMA memory-to-memory transfers
     ROM_IntEnable(INT_UDMA); //Enable uDMA software channel interrupt
     ROM_uDMAChannelAttributeDisable(UDMA_CHANNEL_SW, UDMA_ATTR_USEBURST | UDMA_ATTR_ALTSELECT | (UDMA_ATTR_HIGH_PRIORITY | UDMA_ATTR_REQMASK)); //Put channel attributes in known state
+
     //Two samples are stored in 32 bits of memory. Therefore (2 samples) x (arbitration size of 4) = 8 samples per transfer, so WINDOW_SIZE/2 must >= 8
     ROM_uDMAChannelControlSet(UDMA_CHANNEL_SW | UDMA_PRI_SELECT, UDMA_SIZE_32 | UDMA_SRC_INC_32 | UDMA_DST_INC_32 | UDMA_ARB_4);
+
 
     //Initialize uDMA ADC-to-memory transfers
     //uDMA controller will interrupt as if it came from sequencer 3 of ADC0, so allow NVIC to pass those interrupts to the CPU.
     //(Note that peripheral SEQ3/ADC0 itself wasn't told to turn on interrupts.)
     ROM_IntEnable(INT_ADC0SS3);
     ROM_uDMAChannelAttributeDisable(UDMA_CHANNEL_ADC3, UDMA_ATTR_ALTSELECT | UDMA_ATTR_USEBURST | UDMA_ATTR_HIGH_PRIORITY | UDMA_ATTR_REQMASK);
+
     //Want arbitration set to 1 otherwise underflow occurs on sample sequencer (because sequencer is configured to only sample once per trigger)
     ROM_uDMAChannelControlSet(UDMA_CHANNEL_ADC3 | UDMA_PRI_SELECT, UDMA_SIZE_16 | UDMA_SRC_INC_NONE | UDMA_DST_INC_16 | UDMA_ARB_1);
     ROM_uDMAChannelControlSet(UDMA_CHANNEL_ADC3 | UDMA_ALT_SELECT, UDMA_SIZE_16 | UDMA_SRC_INC_NONE | UDMA_DST_INC_16 | UDMA_ARB_1);
+
     //Last argument is number of items to transfer, NOT number of bytes (udma_demo.c gives impression that it is number of bytes by use of sizeof()).
     ROM_uDMAChannelTransferSet(UDMA_CHANNEL_ADC3 | UDMA_PRI_SELECT, UDMA_MODE_PINGPONG, (void *)(ADC0_BASE + ADC_O_SSFIFO3), ADC_BufA, WINDOW_SIZE/2);
     ROM_uDMAChannelTransferSet(UDMA_CHANNEL_ADC3 | UDMA_ALT_SELECT, UDMA_MODE_PINGPONG, (void *)(ADC0_BASE + ADC_O_SSFIFO3), ADC_BufB, WINDOW_SIZE/2);
@@ -356,19 +331,16 @@ int main(void)
 
 
 
-
-    int i;
-    uint32_t ui32Value;
-    //uint16_t maxval;
     while(1){
 
-        if(SystemState == HALFWINDOW_READYFORREAD_WITHB)
-            {
+        if(SystemState == HALFWINDOW_READYFORREAD_WITHB){
+
             print_buffer_contents(half_window);
             print_buffer_contents(ADC_BufB);
 
             //Advance state and start shifting immediately after done reading from buffer
             SystemState=HALFWINDOW_LOADING_FROMB;
+
             //Set up transfer of second half of signal_segment[WINDOW_SIZE] to its first half
             //(Two samples are being transferred as a single unit.)
             ROM_uDMAChannelTransferSet(UDMA_CHANNEL_SW | UDMA_PRI_SELECT, UDMA_MODE_AUTO, ADC_BufB, half_window, WINDOW_SIZE/4);
@@ -377,9 +349,8 @@ int main(void)
 
             }
 
-        //To do: remove code duplication
-        if(SystemState == HALFWINDOW_READYFORREAD_WITHA)
-        {
+        if(SystemState == HALFWINDOW_READYFORREAD_WITHA){
+
             print_buffer_contents(half_window);
             print_buffer_contents(ADC_BufA);
 
@@ -388,39 +359,9 @@ int main(void)
             ROM_uDMAChannelTransferSet(UDMA_CHANNEL_SW | UDMA_PRI_SELECT, UDMA_MODE_AUTO, ADC_BufA, half_window, WINDOW_SIZE/4);
             ROM_uDMAChannelEnable(UDMA_CHANNEL_SW);
             ROM_uDMAChannelRequest(UDMA_CHANNEL_SW);
+
         }
 
-/*        if(ADC_BufA_Ready==1){
-            ADC_BufA_Ready=0;
-            UARTprintf("A: ");
-            print_buffer_contents(ADC_BufA);
-        }
-
-        if(ADC_BufB_Ready==1){
-            ADC_BufB_Ready=0;
-            UARTprintf("B: ");
-            print_buffer_contents(ADC_BufB);
-        }*/
-
-        //Loop until data is available from ADC after a trigger
-        //while(ADCSequenceDataGet(ADC0_BASE, 3, &ui32Value)==0){}
-
-        //UARTprintf("%d\n",ui32Value);
-
-        //RGBIntensitySet(((float)ui32Value)/4096.0f);
-        //RGBIntensitySet(((float)(ROM_TimerValueGet(WTIMER0_BASE,TIMER_A)))/((float)ROM_SysCtlClockGet()));
-
-        //SysCtlDelay delays 3 * argument clock cycles
-        //SysCtlClockGet() returns clock
-        //SysCtlDelay(ROM_SysCtlClockGet() / (3 * 20));
     }
 
-
-/*    SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOF);
-    while(!SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOF)){}
-    GPIOPinTypeGPIOOutput(GPIO_PORTF_BASE, RED_LED|BLUE_LED|GREEN_LED);
-    GPIOPinWrite(GPIO_PORTF_BASE, RED_LED|BLUE_LED|GREEN_LED, RED_LED);
-    SysCtlDelay(4000000);
-    GPIOPinWrite(GPIO_PORTF_BASE, RED_LED|BLUE_LED|GREEN_LED, GREEN_LED);
-    SysCtlDelay(4000000);*/
 }
