@@ -34,7 +34,7 @@
 
 //Constant declarations
 
-//44.1 kHz
+//100 Hz sampling rate (Eventually want 44.1 kHz)
 #define SAMPLING_PERIOD 0.01
 
 //Window size is the number of samples per window
@@ -151,7 +151,7 @@ void ADCSeq3IntHandler(void)
     {
         //Data in buffer A is ready
 
-        //Set up the next transfer for buffer A so that it is ready when B is full
+        //Set up the next transfer for buffer A so that it can start when B is full
         ROM_uDMAChannelTransferSet(UDMA_CHANNEL_ADC3 | UDMA_PRI_SELECT, UDMA_MODE_PINGPONG, (void *)(ADC0_BASE + ADC_O_SSFIFO3), ADC_BufA, WINDOW_SIZE/2);
 
 
@@ -170,7 +170,7 @@ void ADCSeq3IntHandler(void)
     {
         //Data in buffer B is ready
 
-        //Set up the next transfer for buffer B so that it is ready when A is full
+        //Set up the next transfer for buffer B so that it can start when A is full
         ROM_uDMAChannelTransferSet(UDMA_CHANNEL_ADC3 | UDMA_ALT_SELECT, UDMA_MODE_PINGPONG, (void *)(ADC0_BASE + ADC_O_SSFIFO3), ADC_BufB, WINDOW_SIZE/2);
 
         if(SystemState != HALFWINDOW_DONELOADING_FROMA)
@@ -252,8 +252,8 @@ int main(void)
     UARTprintf("Bispectrum visualizer\n");
 
 
-    //Set global system state
-    SystemState=HALFWINDOW_READYFORREAD_WITHB;
+    //Set starting state of half window module
+    SystemState = HALFWINDOW_READYFORREAD_WITHB;
 
 
     //Set up uDMA
@@ -275,7 +275,7 @@ int main(void)
     ROM_GPIOPinTypeGPIOInput(GPIO_PORTE_BASE, GPIO_PIN_1 | GPIO_PIN_3);
 
 
-    //Set up sequencer 3 to be triggered by on-chip timer (this will control sample rate)
+    //Set up sequencer 3 to be triggered by on-chip wide timer 0 (this will control sample rate)
     ADCSequenceConfigure(ADC0_BASE, 3, ADC_TRIGGER_TIMER, 0);
     ROM_ADCSequenceStepConfigure(ADC0_BASE, 3, 0, ADC_CTL_IE | ADC_CTL_END | ADC_CTL_CH1); //Input channel 1 which corresponds to AIN1
     ROM_ADCSequenceEnable(ADC0_BASE, 3);
@@ -286,7 +286,7 @@ int main(void)
     ROM_IntEnable(INT_UDMA); //Enable uDMA software channel interrupt
     ROM_uDMAChannelAttributeDisable(UDMA_CHANNEL_SW, UDMA_ATTR_USEBURST | UDMA_ATTR_ALTSELECT | (UDMA_ATTR_HIGH_PRIORITY | UDMA_ATTR_REQMASK)); //Put channel attributes in known state
 
-    //Two samples are stored in 32 bits of memory. Therefore (2 samples) x (arbitration size of 4) = 8 samples per transfer, so WINDOW_SIZE/2 must >= 8
+    //Two samples are stored in 32 bits of memory. Therefore (2 samples) x (arbitration size of 4) = 8 samples per transfer, so WINDOW_SIZE/2 must be >= 8
     ROM_uDMAChannelControlSet(UDMA_CHANNEL_SW | UDMA_PRI_SELECT, UDMA_SIZE_32 | UDMA_SRC_INC_32 | UDMA_DST_INC_32 | UDMA_ARB_4);
 
 
@@ -335,14 +335,15 @@ int main(void)
 
         if(SystemState == HALFWINDOW_READYFORREAD_WITHB){
 
+            //"Process" data by printing it to terminal for now
             print_buffer_contents(half_window);
             print_buffer_contents(ADC_BufB);
 
-            //Advance state and start shifting immediately after done reading from buffer
-            SystemState=HALFWINDOW_LOADING_FROMB;
+            //Advance state and start software DMA transfer.
+            SystemState = HALFWINDOW_LOADING_FROMB;
 
-            //Set up transfer of second half of signal_segment[WINDOW_SIZE] to its first half
-            //(Two samples are being transferred as a single unit.)
+            //Set up and start transfer of ADC_BufB into half_window.
+            //(Two samples are being transferred as a single unit, hence WINDOW_SIZE/4.)
             ROM_uDMAChannelTransferSet(UDMA_CHANNEL_SW | UDMA_PRI_SELECT, UDMA_MODE_AUTO, ADC_BufB, half_window, WINDOW_SIZE/4);
             ROM_uDMAChannelEnable(UDMA_CHANNEL_SW);
             ROM_uDMAChannelRequest(UDMA_CHANNEL_SW);
@@ -351,11 +352,15 @@ int main(void)
 
         if(SystemState == HALFWINDOW_READYFORREAD_WITHA){
 
+            //"Process" data by printing it to terminal for now
             print_buffer_contents(half_window);
             print_buffer_contents(ADC_BufA);
 
-            SystemState=HALFWINDOW_LOADING_FROMA;
+            //Advance state and start software DMA transfer.
+            SystemState = HALFWINDOW_LOADING_FROMA;
 
+            //Set up and start transfer of ADC_BufA into half_window.
+            //(Two samples are being transferred as a single unit, hence WINDOW_SIZE/4.)
             ROM_uDMAChannelTransferSet(UDMA_CHANNEL_SW | UDMA_PRI_SELECT, UDMA_MODE_AUTO, ADC_BufA, half_window, WINDOW_SIZE/4);
             ROM_uDMAChannelEnable(UDMA_CHANNEL_SW);
             ROM_uDMAChannelRequest(UDMA_CHANNEL_SW);
